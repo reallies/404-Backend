@@ -31,24 +31,42 @@ checkmate-backend/
 └── test/
 ```
 
-## Getting Started
+## Getting Started (로컬 Docker)
 
 ```bash
 # 1) 의존성 설치
 npm install
 
-# 2) .env 준비
+# 2) .env 준비 (.env.example 기본값이 docker-compose 와 일치)
 cp .env.example .env
-# DATABASE_URL / SUPABASE_* 를 채운다.
 
-# 3) DB 마이그레이션 & 시드
-npm run prisma:migrate -- --name init
-npm run prisma:seed
+# 3) 로컬 Postgres + Redis 기동
+docker compose up -d
+# 확인: docker ps | grep checkmate  →  두 컨테이너 모두 (healthy)
 
-# 4) 개발 서버
+# 4) DB 마이그레이션 & 마스터 데이터 시드
+npx prisma migrate dev --name init
+npx ts-node --transpile-only prisma/seed.ts
+
+# 5) 개발 서버
 npm run start:dev
 # -> http://localhost:8080/api
+
+# 6) 스모크 테스트
+curl http://localhost:8080/api/auth/health
+curl http://localhost:8080/api/master/countries
 ```
+
+### 주요 스크립트
+
+| 명령 | 설명 |
+| --- | --- |
+| `docker compose up -d` / `down` | 로컬 Postgres(5432) + Redis(6379) 기동/중지 |
+| `npx prisma migrate dev` | 스키마 변경 시 새 마이그레이션 생성/적용 |
+| `npx prisma studio` | DB GUI (http://localhost:5555) |
+| `npx ts-node --transpile-only prisma/seed.ts` | 마스터 데이터 재시드 (idempotent) |
+| `npm run start:dev` | Nest dev server (HMR) |
+| `npm run build` | `dist/` 로 컴파일 |
 
 ## API Surface (초기)
 
@@ -61,8 +79,11 @@ npm run start:dev
 | GET | `/api/master/checklist-categories` | 카테고리 | ✅ |
 | GET | `/api/master/travel-styles` | 여행 스타일 | ✅ |
 | GET | `/api/master/companion-types` | 동행 유형 | ✅ |
-| GET | `/api/trips?userId=` | 유저 trip 목록 | 🔐 |
-| GET | `/api/trips/:id` | trip 상세 | 🔐 |
+| GET | `/api/trips?userId=` | 유저 trip 목록 (soft-delete 제외) | 🔐 |
+| GET | `/api/trips/:id` | trip 상세 (country/cities/flights/companions/styles/checklist include) | 🔐 |
+| POST | `/api/trips` | trip + 관계 한 번에 생성 (단일 트랜잭션) | 🔐 |
+| PATCH | `/api/trips/:id` | 부분 수정. 배열 전달 시 해당 관계 전체 교체 | 🔐 |
+| DELETE | `/api/trips/:id` | Soft delete (`deleted_at`) | 🔐 |
 | GET | `/api/checklists/by-trip/:tripId` | 체크리스트 | 🔐 |
 | POST | `/api/llm/trips/:tripId/generate` | LLM 생성 요청 | 🔐 |
 | GET | `/api/llm/trips/:tripId/generations` | LLM 이력 | 🔐 |

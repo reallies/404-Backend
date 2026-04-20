@@ -44,23 +44,23 @@ export class SupabaseJwtGuard implements CanActivate {
       user?: AuthUser;
     }>();
 
+    const secret = this.config.get<string>('supabase.jwtSecret');
+    const isProd = this.config.get<string>('app.nodeEnv') === 'production';
+
+    // 개발 환경 & Supabase 미설정 → 인증 건너뛰고 dev-anon 주입.
+    // (헤더가 있어도 검증하지 않는다. 프론트/통합 환경 세팅 전에도 수동 테스트 가능.)
+    if (!secret) {
+      if (isProd) throw new UnauthorizedException('JWT secret not configured');
+      req.user = { supabaseId: 'dev-anon', userId: null, email: null };
+      return true;
+    }
+
     const header = req.headers['authorization'];
     const auth = Array.isArray(header) ? header[0] : header;
     if (!auth || !auth.startsWith('Bearer ')) {
       throw new UnauthorizedException('Missing Bearer token');
     }
     const token = auth.slice('Bearer '.length).trim();
-
-    const secret = this.config.get<string>('supabase.jwtSecret');
-    if (!secret) {
-      // 개발 환경에서 Supabase 미설정 시, JWT 없이도 부팅 가능하도록 허용.
-      if (this.config.get<string>('app.nodeEnv') !== 'production') {
-        this.logger.warn('SUPABASE_JWT_SECRET 미설정 — dev 모드에서 검증을 건너뜁니다.');
-        req.user = { supabaseId: 'dev-anon', userId: null, email: null };
-        return true;
-      }
-      throw new UnauthorizedException('JWT secret not configured');
-    }
 
     const payload = this.verifyHs256(token, secret);
     if (!payload) throw new UnauthorizedException('Invalid token');
