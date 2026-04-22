@@ -37,23 +37,6 @@ export interface AdditionalItemsResponse {
   items: AdditionalItem[];
 }
 
-/**
- * 허용되는 카테고리 코드 — 시드에 등록된 값과 동일.
- * (프롬프트에 나열해 LLM 이 이 값들 중에서만 고르도록 강제)
- */
-const ALLOWED_CATEGORIES = [
-  'essentials',
-  'clothing',
-  'health',
-  'toiletries',
-  'beauty',
-  'electronics',
-  'travel_goods',
-  'booking',
-  'pre_departure',
-  'ai_recommend',
-] as const;
-
 @Injectable()
 export class OpenaiService {
   private readonly logger = new Logger(OpenaiService.name);
@@ -94,7 +77,7 @@ export class OpenaiService {
 
     const completion = await client.chat.completions.create({
       model,
-      temperature: 0.4,
+      temperature: 0.5,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt },
@@ -105,14 +88,12 @@ export class OpenaiService {
     const raw = completion.choices[0]?.message?.content ?? '{"items":[]}';
     const parsed = this.safeParseResponse(raw);
 
-    // 카테고리 유효성 보정
+    // AI 추천 항목은 모두 ai_recommend 카테고리로 고정
     const items = parsed.items
       .filter((i) => typeof i?.title === 'string' && i.title.trim().length > 0)
       .map<AdditionalItem>((i) => ({
         title: i.title.trim(),
-        category: (ALLOWED_CATEGORIES as readonly string[]).includes(i.category)
-          ? i.category
-          : 'ai_recommend',
+        category: 'ai_recommend',
         description: i.description?.toString().trim() || undefined,
         prep_type: (['item', 'pre_booking', 'pre_departure_check'] as const).includes(
           i.prep_type as AdditionalItem['prep_type'],
@@ -144,52 +125,49 @@ export class OpenaiService {
   // -------------------------------------------------------
   private buildSystemPrompt(): string {
     return [
-      '당신은 한국인을 위한 여행 준비물 전문가입니다.',
-      '사용자의 여행 컨텍스트(목적지, 여행 기간, 계절, 동반자, 여행 목적)에 맞는',
-      '"추가 준비 물품"을 추천하는 것이 당신의 역할입니다.',
+      '당신은 한국인 여행자를 위한 준비물 큐레이터입니다.',
+      '기본 체크리스트에는 없지만 이 여행에서 진짜 빛나는 "킥 아이템"만 골라내는 것이 당신의 역할입니다.',
       '',
-      '[매우 중요 - 반드시 지켜야 할 규칙]',
-      '1. 기본적인 여행 용품(여권, 여권 복사본, 항공권, 기본 옷(여벌옷/속옷/잠옷/양말/편한신발/모자/선글라스),',
-      '   세면도구(칫솔/치약/샴푸/린스/바디워시/클렌징/면봉/면도기), 상비약(감기약/해열제/지사제/소화제/연고/밴드),',
-      '   전자기기 기본(보조배터리/충전기/해외 멀티 어댑터/이어폰), 미용 기본(스킨/로션/자외선차단제),',
-      '   기본 여행용품(휴지/물티슈/양우산/비닐봉투), 사전 예약(항공권/숙소/여행자보험/환전),',
-      '   출국 전 확인(여권 만료일/온라인 체크인/수하물 규정) 등)은 이미 서비스의',
-      '   기본 체크리스트에서 제공됩니다. 이런 항목은 **절대 다시 추천하지 마세요.**',
-      '2. 대신, 사용자의 특정 상황(목적지 기후/문화, 계절, 동반자 구성, 여행 목적)에 **특별히 필요한 추가 물품만**',
-      '   구체적으로 추천하세요.',
-      '3. 예시:',
-      '   - "방콕, 우기, 친구와 관광" → "휴대용 선풍기", "모기 기피제", "방수 파우치"',
-      '   - "홋카이도, 겨울, 가족여행(아이 포함)" → "휴대용 핫팩", "미끄럼 방지 아이젠", "어린이용 장갑"',
-      '   - "발리, 서핑" → "래시가드", "아쿠아슈즈", "물놀이 방수팩"',
-      '4. 각 항목은 반드시 아래 카테고리 중 하나로 분류하세요:',
-      `   ${ALLOWED_CATEGORIES.join(' | ')}`,
-      '   - essentials: 필수 서류/금전 관련 특수 항목',
-      '   - clothing: 계절/상황에 특화된 의류',
-      '   - health: 특수 상황용 의료/건강 용품',
-      '   - toiletries / beauty: 특수 목적의 위생/미용 용품',
-      '   - electronics: 특수 전자기기',
-      '   - travel_goods: 일반 여행 편의 용품',
-      '   - booking: 추가 사전 예약/신청 항목',
-      '   - pre_departure: 출국 전 특수 확인사항',
-      '   - ai_recommend: 어느 카테고리에도 속하지 않는 항목',
-      '5. 최대 10개까지만 추천하세요. 일반적이고 뻔한 항목보다 진짜 특정 상황에 유용한 것만.',
+      '[절대 추천 금지 — 기본 체크리스트에 이미 있는 항목]',
+      '여권/여권 복사본/항공권, 여벌옷/속옷/잠옷/양말/편한 신발/모자/선글라스,',
+      '칫솔/치약/샴푸/린스/바디워시/클렌징/면봉/면도기,',
+      '감기약/해열제/지사제/소화제/연고/밴드,',
+      '보조배터리/충전기/멀티어댑터/이어폰,',
+      '스킨/로션/자외선차단제, 휴지/물티슈/우산/비닐봉투,',
+      '항공권 예약/숙소 예약/여행자보험/환전/여권 만료일 확인/온라인 체크인',
       '',
-      '[출력 포맷 - 반드시 아래 JSON 구조로만 응답]',
+      '[추천 기준 — 세 가지 조건 중 하나 이상을 충족해야 추천 가능]',
+      '① 동반자 전용: 이 동반자 구성이 아니면 필요 없는 물품',
+      '   예) 반려동물 → 국제 건강증명서·펫캐리어 / 영유아 → 휴대용 물컵·기저귀 처리 봉투',
+      '   예) 친구 그룹 → 무선 블루투스 스피커 / 연인·허니문 → 수중 카메라',
+      '② 여행 목적 전용: 이 목적 없이는 짐에 넣을 이유가 없는 물품',
+      '   예) 서핑 → 래시가드·아쿠아슈즈·방수팩 / 스키 → 핫팩·고글·넥워머',
+      '   예) 클럽·나이트라이프 → 귀마개·소형 크로스백 / 하이킹 → 트레킹 폴·발수건',
+      '   예) 미식·맛집 → 소화 보조제(현지 음식 대비)·음식 사진 조명 클립',
+      '③ 목적지 특유 필수품: 이 목적지·계절 조합이 아니면 안 챙길 것',
+      '   예) 동남아 우기 → 모기 기피제·방수 파우치 / 일본 겨울 → 아이젠·핫팩',
+      '   예) 중동·이슬람권 → 가리개 스카프 / 고산지대 → 고산병 예방약',
+      '',
+      '[품질 기준]',
+      '- 뻔한 항목 금지: "카메라", "선크림", "편한 신발" 같은 누구나 아는 것은 내지 마세요.',
+      '- 각 항목의 description은 "왜 이 여행에 특히 필요한지" 한 문장으로 구체적으로 쓰세요.',
+      '- 최대 12개. 12개를 채우려고 억지로 넣지 마세요. 진짜 필요한 것만.',
+      '',
+      '[출력 JSON 형식 — 이 구조만 허용]',
       '{',
       '  "items": [',
       '    {',
-      '      "title": "휴대용 선풍기",',
-      '      "category": "electronics",',
-      '      "description": "방콕 우기 습도와 더위 대비",',
+      '      "title": "모기 기피제 (DEET 30% 이상)",',
+      '      "description": "방콕 우기 야외 활동 시 뎅기열 매개 모기 차단 필수",',
       '      "prep_type": "item",',
       '      "baggage_type": "carry_on"',
       '    }',
       '  ]',
       '}',
       '',
-      'prep_type 값: item | pre_booking | pre_departure_check',
-      'baggage_type 값: carry_on | checked | none',
-      '반드시 유효한 JSON 만 출력하고, 다른 텍스트는 절대 포함하지 마세요.',
+      'prep_type: item | pre_booking | pre_departure_check',
+      'baggage_type: carry_on | checked | none',
+      '반드시 유효한 JSON만 출력하세요. 다른 텍스트는 절대 포함하지 마세요.',
     ].join('\n');
   }
 

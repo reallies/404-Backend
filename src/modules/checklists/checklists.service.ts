@@ -639,7 +639,7 @@ export class ChecklistsService {
           description: raw.description,
           categoryCode: category?.code ?? 'ai_recommend',
           categoryLabel: category?.labelKo ?? 'AI 추천',
-          prepType: raw.prep_type,
+          prepType: 'ai_recommend' as const,
           baggageType: raw.baggage_type,
           source: 'llm' as const,
           isEssential: false,
