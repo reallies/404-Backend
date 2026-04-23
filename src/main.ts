@@ -13,6 +13,10 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 };
 
 async function bootstrap() {
+  if (process.env.NODE_ENV === 'production' && process.env.AUTH_DEV_BYPASS === 'true') {
+    throw new Error('AUTH_DEV_BYPASS must be false in production');
+  }
+
   const app = await NestFactory.create(AppModule, {
     logger: ['log', 'error', 'warn', 'debug', 'verbose'],
   });
