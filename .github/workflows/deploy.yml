@@ -1,0 +1,121 @@
+# Required GitHub Secrets
+# ─────────────────────────────────────────────────────────────────────────────
+# EC2_HOST     EC2 Public DNS 또는 Elastic IP
+#              예) ec2-13-xx.ap-northeast-2.compute.amazonaws.com
+#
+# EC2_USER     SSH 사용자명 (보통 ubuntu)
+#
+# EC2_SSH_KEY  배포용 PEM 프라이빗 키 전체 내용
+#              -----BEGIN OPENSSH PRIVATE KEY-----
+#              ...
+#              -----END OPENSSH PRIVATE KEY-----
+#
+# PROD_DOMAIN  헬스체크용 도메인 (프로토콜 제외)
+#              예) checkmate.example.com
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend-prod
+  cancel-in-progress: false
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. 빌드
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build Backend
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Build (nest build → dist/)
+        run: npm run build
+
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dist
+          # node_modules 제외 — EC2에서 npm ci 로 재설치 (OS 네이티브 바이너리 보장)
+          path: |
+            dist
+            prisma
+            package.json
+            package-lock.json
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. EC2 배포
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-24.04
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download backend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-dist
+          path: _deploy/backend
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Rsync backend artifact
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            _deploy/backend/ \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/checkmate/_incoming/backend/
+
+      - name: Rsync deploy scripts and configs
+        # scripts/, deploy/ 를 EC2에 동기화해 프론트 워크플로우에서도 참조 가능하게 함
+        run: |
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            scripts/ \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/checkmate/scripts/
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            deploy/ \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/checkmate/deploy/
+
+      - name: Run deploy script on EC2
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            "bash /home/${{ secrets.EC2_USER }}/checkmate/scripts/deploy.sh --backend=true"
+
+      - name: Health check
+        run: |
+          echo "Waiting for server to be ready..."
+          sleep 10
+          curl --fail --silent --max-time 15 \
+            "https://${{ secrets.PROD_DOMAIN }}/api/auth/health" \
+            && echo "Health check passed" \
+            || (echo "Health check failed" && exit 1)
